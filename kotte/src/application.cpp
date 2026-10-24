@@ -85,6 +85,9 @@ namespace kotte
         if(IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S)){
             movement_direction.y += 1.0f;
         }
+        if (game_state_ != State::playing && IsKeyPressed(KEY_R)) {
+            restart();
+        }
 
         // Normalize intent before simulation so bindings cannot change movement speed.
         if(movement_direction.x != 0.0f || movement_direction.y != 0.0f){
@@ -171,7 +174,10 @@ namespace kotte
         update_camera(delta_time);
     }
 
-    void Application::update_player(float delta_time){
+    void Application::update_player(float delta_time) {
+        if (!entities_.contains(player_handle_)) {///
+            return;
+        }///
         const Vector2 direction = frame_actions_.player_movement_direction;
 
         Entity& player_entity = player();
@@ -179,25 +185,58 @@ namespace kotte
         const Vector2 displacement = direction * (player_speed_ * delta_time);
 
         // Separate proposals let a clear axis slide along a blocked one.
-        if(displacement.x != 0.0f){
-            try_move_player({displacement.x, 0.0f});
+        if (displacement.x != 0.0f) {
+            try_move_player({ displacement.x, 0.0f });
         }
-        if(displacement.y != 0.0f){
-            try_move_player({0.0f, displacement.y});
+        if (displacement.y != 0.0f) {
+            try_move_player({ 0.0f, displacement.y });
         }
 
         const Rectangle player_bounds = entity_world_bounds(player_entity);
-        const Vector2 bounds_offset = player_entity.world_position - Vector2{player_bounds.x, player_bounds.y};
+        const Vector2 bounds_offset = player_entity.world_position - Vector2{ player_bounds.x, player_bounds.y };
         const float floor_left = static_cast<float>(tile_size_);
         const float floor_top = static_cast<float>(tile_size_);
         const float floor_right = static_cast<float>((map_.width() - 1) * tile_size_);
         const float floor_bottom = static_cast<float>((map_.height() - 1) * tile_size_);
-        const Vector2 minimum_position{floor_left + bounds_offset.x, floor_top + bounds_offset.y};
-        const Vector2 maximum_position{floor_right - bounds_offset.x, floor_bottom};
+        const Vector2 minimum_position{ floor_left + bounds_offset.x, floor_top + bounds_offset.y };
+        const Vector2 maximum_position{ floor_right - bounds_offset.x, floor_bottom };
         player_entity.world_position = Vector2Clamp(player_entity.world_position, minimum_position, maximum_position);
 
         const Rectangle new_world_bounds = entity_world_bounds(player_entity);
         spatial_grid_.update(player_handle_, old_world_bounds, new_world_bounds);
+
+        const Rectangle player_world_bounds = entity_world_bounds(player_entity);   //////////
+        const SpatialQuery broad_phase_candidates_query = spatial_grid_.query(player_world_bounds);
+
+        for (const EntityHandle candidate_handles : broad_phase_candidates_query.entity_handles) {
+            if (candidate_handles == player_handle_) {
+                continue;
+            }
+
+            const Entity* candidate = entities_.try_get(candidate_handles);
+
+            if (candidate == nullptr || candidate->kind != EntityKind::enemy) {
+                continue;
+            }
+
+            if (candidate->kind == EntityKind::powerup) {
+
+                if (CheckCollisionRecs(player_world_bounds, entity_world_bounds(*candidate))) {
+                    if (current_blast_range_ < 6) { // 限制最大范围上限，比如最高到 6
+                        current_blast_range_++;
+                    }
+                    destroy_entity_requests_.push_back({ candidate_handles }); // 安全销毁道具
+                }
+                continue;
+            }
+            if (candidate->kind == EntityKind::enemy) {
+
+                if (CheckCollisionRecs(player_world_bounds, entity_world_bounds(*candidate))) {
+                    destroy_entity_requests_.push_back({ player_handle_ });
+                    break;
+                }
+            }//////
+        }
     }
 
     void Application::try_move_player(Vector2 axis_displacement){
@@ -265,7 +304,7 @@ namespace kotte
 
     void Application::apply_bomb_placements(){
         for(const PlaceBombRequest& request : place_bomb_requests_){
-            const Entity* owner = entities_.try_get(request.owner);
+            const Entity* owner = entities_.try_get(request.owner);//系统会去检查active_bomb_handles_，如果玩家已经放了炸弹，就不允许再放炸弹
             if(owner == nullptr || owner->kind != EntityKind::player
                 || owner_has_active_bomb(request.owner)){
                 continue;
@@ -289,6 +328,26 @@ namespace kotte
         }
 
         place_bomb_requests_.clear();
+    }
+
+    void Application::restart() {    //////////////////////////////
+        game_state_ = State::playing;
+
+        place_bomb_requests_.clear();        //放炸弹的请求
+        bomb_detonated_facts_.clear();       //炸弹爆炸
+        blast_effects_.clear();              //炸弹爆炸特效
+        active_bomb_handles_.clear();        //上一局的炸弹和敌人名单
+        enemy_handles_.clear();              //活着的敌人名单
+        destroy_entity_requests_.clear();    //遗留的死人名单
+
+        entities_ = EntityStore{};
+        spatial_grid_ = SpatialGrid{ 
+            {static_cast<float>(map_.width() * tile_size_),
+             static_cast<float>(map_.height() * tile_size_) },
+            spatial_cell_size_ };       /////////////////
+
+        populate_entities();
+        initialize_enemies();
     }
 
     void Application::apply_entity_destructions(){
@@ -325,6 +384,15 @@ namespace kotte
         });
 
         destroy_entity_requests_.clear();
+
+        if (game_state_ == State::playing) {
+            if (!entities_.contains(player_handle_)) {
+                game_state_ = State::defeat;
+            }
+            else if (enemy_handles_.empty()) {           //////////////////////////// 
+                game_state_ = State::victory;
+            }
+        }
     }
 
     bool Application::resolve_blast_tile(
@@ -343,6 +411,7 @@ namespace kotte
         };
         const SpatialQuery contacts = spatial_grid_.query(tile_bounds);
         bool blocked_by_crate = false;
+        bool blocked_by_player = false;
 
         for(const EntityHandle handle : contacts.entity_handles){
             const Entity* candidate = entities_.try_get(handle);
@@ -361,6 +430,8 @@ namespace kotte
                 blocked_by_crate = true;
                 break;
             case EntityKind::player:
+                destroy_entity_requests_.push_back({ handle });
+                blocked_by_player = true;
                 // Player-hit consequences are outside the Week 6 lifetime seam.
                 break;
             }
@@ -392,7 +463,12 @@ namespace kotte
     void Application::update_camera(float delta_time) noexcept{
         (void) delta_time; // name the argument to avoid the static analyzer yelling at us. :) We'll animate the camera later.
         camera_.set_viewport_size(window_.size());
-        camera_.set_centre(player().world_position);
+
+        const Entity* current_player = entities_.try_get(player_handle_);
+        if (current_player != nullptr) {
+            camera_.set_centre(current_player->world_position); //////////////
+        }
+        //camera_.set_centre(player().world_position);
     }
 
     void Application::render(){
@@ -546,27 +622,35 @@ namespace kotte
         DrawText(diagnostics.c_str(), 10, window_.height() - 54, 20, RAYWHITE);
 
         DrawText("move: WASD/arrows | bomb: Space | quit: Q/Escape", 10, window_.height() - 30, 20, LIGHTGRAY);
+
+        if (game_state_ == State::victory) {
+            DrawText("Victory!", window_.width() / 2 - 100, window_.height() / 2 - 50, 60, GOLD);
+        }
+
+        if (game_state_ == State::defeat) {
+            DrawText("Defeat", window_.width() / 2 - 100, window_.height() / 2 - 50, 60, RED);
+        }
     }
 
-    void Application::populate_entities(){
+    void Application::populate_entities() {
         // Match the generation density so initial creation does not repeatedly
         // relocate slot storage. Handles remain valid even if this estimate grows.
         entities_.reserve(map_.tile_count() / 4);
 
-        const Entity player_entity{EntityKind::player, {tile_size_ * 2.5f, tile_size_ * 2.5f}};
+        const Entity player_entity{ EntityKind::player, {tile_size_ * 2.5f, tile_size_ * 2.5f} };
         player_handle_ = entities_.create(player_entity);
         spatial_grid_.insert(player_handle_, entity_world_bounds(player_entity));
 
-        for(int y = 1; y < map_.height() - 1; ++y){
-            for(int x = 1; x < map_.width() - 1; ++x){
-                if((x == 2 && y == 2) || map_.at(x, y).type != TileType::floor || !random_.coin_flip(0.25f)){
+        for (int y = 1; y < map_.height() - 1; ++y) {
+            for (int x = 1; x < map_.width() - 1; ++x) {
+                if ((x == 2 && y == 2) || map_.at(x, y).type != TileType::floor || !random_.coin_flip(0.25f)) {
                     continue;
                 }
 
                 const std::uint8_t kind_roll = random_.next<20, std::uint8_t>();
                 // Week 3's inert bomb markers are no longer needed: every bomb
                 // now enters the world through the explicit lifetime path.
-                if(kind_roll >= 15 && kind_roll < 19){
+                if (kind_roll >= 15 && kind_roll < 19) {
                     continue;
                 }
                 const EntityKind kind = kind_roll < 15 ? EntityKind::crate : EntityKind::enemy;
@@ -574,15 +658,19 @@ namespace kotte
                     static_cast<float>(x * tile_size_ + tile_size_ / 2),
                     static_cast<float>(y * tile_size_ + tile_size_ / 2)
                 };
-                const Entity new_entity{kind, world_position};
+                const Entity new_entity{ kind, world_position };
                 const EntityHandle handle = entities_.create(new_entity);
                 spatial_grid_.insert(handle, entity_world_bounds(new_entity));
 
-                if(kind == EntityKind::enemy){
+                if (kind == EntityKind::enemy) {
                     enemy_handles_.push_back(handle);
                 }
             }
         }
+                const Entity powerup_entity{ EntityKind::powerup, 
+                    {tile_size_ * 3.5f, tile_size_ * 2.5f} };
+                const EntityHandle powerup_handle = entities_.create(powerup_entity);
+                spatial_grid_.insert(powerup_handle, entity_world_bounds(powerup_entity));
     }
 
     void Application::initialize_enemies(){
@@ -692,9 +780,16 @@ namespace kotte
             // Narrow phase: exact-test the remaining solid candidate.
             ++collision_diagnostics_.exact_tests;
             if(CheckCollisionRecs(proposed_collision_bounds, entity_collision_bounds(*candidate))){
+                const Rectangle original_collision_bounds = entity_collision_bounds(entity(moving_entity_handle));  ///////////根据正在移动的实体的句柄，先找到这个实体本身，再计算出它的碰撞包围盒矩形
+                if (candidate->kind == EntityKind::bomb) {    ////////////candidate's tag is a bomb
+                    if (candidate->bomb_state.has_value() && candidate->bomb_state->owner == moving_entity_handle
+                        && CheckCollisionRecs(original_collision_bounds, entity_collision_bounds(*candidate))) {  ///////////validate the bomb-owner relationship
+                        continue;
+                    }
+                }
                 ++collision_diagnostics_.contacts;
                 blocked = true;
-            }
+            }    ///////////////
         }
 
         return blocked;
@@ -705,11 +800,11 @@ namespace kotte
         case EntityKind::player:
         case EntityKind::crate:
         case EntityKind::enemy:
-            return true;
         case EntityKind::bomb:
+            return true;
+        case EntityKind::powerup:
             return false;
         }
-
         return false;
     }
 
@@ -767,6 +862,7 @@ namespace kotte
         case EntityKind::bomb: return bomb_color_;
         case EntityKind::crate: return crate_color_;
         case EntityKind::enemy: return enemy_color_;
+        case EntityKind::powerup: return powerup_color_;
         }
         return MAGENTA;
     }

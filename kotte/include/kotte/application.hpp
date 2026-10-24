@@ -47,6 +47,13 @@ namespace kotte
         void request_exit() noexcept;
 
     private:
+        enum class State {
+            playing,
+            victory,
+            defeat      
+        };
+        State game_state_ = State::playing;
+
         struct FrameActions final {
             Vector2 player_movement_direction{};
             bool place_bomb = false;
@@ -87,6 +94,7 @@ namespace kotte
         void queue_bomb_placement();
         void apply_entity_destructions();
         void apply_bomb_placements();
+        void restart();
         [[nodiscard]] bool resolve_blast_tile(
             BlastEffect& effect,
             int column,
@@ -139,6 +147,8 @@ namespace kotte
         static constexpr Color crate_color_{0xb0, 0x72, 0x3c, 0xff};
         static constexpr Color enemy_color_{0xd9, 0x4f, 0x70, 0xff};
         static constexpr Color wall_color_{0x78, 0x5f, 0x47, 0xff};
+        static constexpr Color powerup_color_{0x4e, 0xf2, 0x93, 0xff};
+
 
         Window window_; // Constructed first, destroyed last.
         Camera camera_;
@@ -157,6 +167,7 @@ namespace kotte
         CollisionDiagnostics collision_diagnostics_;
         std::uint64_t seed_;
         EntityHandle player_handle_;
+        std::uint8_t current_blast_range_ = bomb_blast_range_;
         bool exit_requested_ = false;
     };
 }

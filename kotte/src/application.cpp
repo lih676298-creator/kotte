@@ -140,14 +140,7 @@ namespace kotte
 
     void Application::resolve_gameplay_facts(){
         for(const BombDetonated& fact : bomb_detonated_facts_){
-            //// 【新增检查】确保这个炸弹还在活跃列表中（说明它还没被引爆过）
-            //auto it = std::ranges::find(active_bomb_handles_, fact.bomb);//7.
-            //if (it == active_bomb_handles_.end()) {
-            //    continue; // 如果已经不在了，说明它刚才已经被连锁引爆过了，直接跳过！
-            //}
-            //// 从活跃列表中移除它（防止重复引爆）
-            //active_bomb_handles_.erase(it);//7.
-
+            
             BlastEffect effect;
             effect.remaining_seconds = blast_effect_seconds_;
             effect.tile_centres.reserve(static_cast<std::size_t>(fact.blast_range) * 4 + 1);
@@ -448,21 +441,7 @@ namespace kotte
             }
 
             switch(candidate->kind){
-            case EntityKind::bomb: {//7.
-                // 如果爆炸波及到了一个活着的炸弹，触发连锁引爆
-                if (candidate->bomb_state.has_value()) {
-                    // 可以直接把该炸弹加入到炸弹引爆事实队列中，或者提前将其导火索归零
-                    bomb_detonated_facts_.push_back({
-                        .bomb = handle,
-                        .owner = candidate->bomb_state->owner,
-                        .world_position = candidate->world_position,
-                        .blast_range = candidate->bomb_state->blast_range
-                        });
-                }
-                destroy_entity_requests_.push_back({ handle });
-                break;
-            }//7.
-
+            case EntityKind::bomb:
             case EntityKind::enemy:
                 destroy_entity_requests_.push_back({handle});
                 break;

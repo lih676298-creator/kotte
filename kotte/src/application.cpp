@@ -100,6 +100,13 @@ namespace kotte
         update_player(delta_time);
         update_enemies(delta_time);
         queue_bomb_placement();
+        // 连击计时器随时间递减11.
+        if (combo_timer_ > 0.0f) {
+            combo_timer_ -= delta_time;
+            if (combo_timer_ <= 0.0f) {
+                combo_multiplier_ = 1; // 超时，重置连击倍数
+            }
+        }///11.
     }
 
     void Application::update_timed_gameplay(float delta_time){
@@ -133,6 +140,14 @@ namespace kotte
 
     void Application::resolve_gameplay_facts(){
         for(const BombDetonated& fact : bomb_detonated_facts_){
+            //// 【新增检查】确保这个炸弹还在活跃列表中（说明它还没被引爆过）
+            //auto it = std::ranges::find(active_bomb_handles_, fact.bomb);//7.
+            //if (it == active_bomb_handles_.end()) {
+            //    continue; // 如果已经不在了，说明它刚才已经被连锁引爆过了，直接跳过！
+            //}
+            //// 从活跃列表中移除它（防止重复引爆）
+            //active_bomb_handles_.erase(it);//7.
+
             BlastEffect effect;
             effect.remaining_seconds = blast_effect_seconds_;
             effect.tile_centres.reserve(static_cast<std::size_t>(fact.blast_range) * 4 + 1);
@@ -215,27 +230,25 @@ namespace kotte
 
             const Entity* candidate = entities_.try_get(candidate_handles);
 
-            if (candidate == nullptr || candidate->kind != EntityKind::enemy) {
+            if (candidate == nullptr) {
                 continue;
             }
 
-            if (candidate->kind == EntityKind::powerup) {
+            if (CheckCollisionRecs(player_world_bounds, entity_world_bounds(*candidate))) {
 
-                if (CheckCollisionRecs(player_world_bounds, entity_world_bounds(*candidate))) {
+                if (candidate->kind == EntityKind::powerup) {
+                    destroy_entity_requests_.push_back({ candidate_handles }); // 安全销毁道具
                     if (current_blast_range_ < 6) { // 限制最大范围上限，比如最高到 6
                         current_blast_range_++;
                     }
-                    destroy_entity_requests_.push_back({ candidate_handles }); // 安全销毁道具
                 }
-                continue;
-            }
-            if (candidate->kind == EntityKind::enemy) {
 
-                if (CheckCollisionRecs(player_world_bounds, entity_world_bounds(*candidate))) {
-                    destroy_entity_requests_.push_back({ player_handle_ });
-                    break;
-                }
-            }//////
+                if (candidate->kind == EntityKind::enemy) {
+                        destroy_entity_requests_.push_back({ player_handle_ });
+                        break;
+                }//////
+            }
+            
         }
     }
 
@@ -305,10 +318,11 @@ namespace kotte
     void Application::apply_bomb_placements(){
         for(const PlaceBombRequest& request : place_bomb_requests_){
             const Entity* owner = entities_.try_get(request.owner);//系统会去检查active_bomb_handles_，如果玩家已经放了炸弹，就不允许再放炸弹
+            constexpr int max_bombs_per_player = 5;//6.
             if(owner == nullptr || owner->kind != EntityKind::player
-                || owner_has_active_bomb(request.owner)){
+                || count_active_bombs(request.owner) >= max_bombs_per_player){
                 continue;
-            }
+            }//6.
 
             const Entity bomb{
                 .kind = EntityKind::bomb,
@@ -316,7 +330,7 @@ namespace kotte
                 .bomb_state = BombState{
                     .owner = request.owner,
                     .fuse_remaining = bomb_fuse_seconds_,
-                    .blast_range = bomb_blast_range_
+                    .blast_range = current_blast_range_//5爆炸范围大大大
                 }
             };
             const EntityHandle bomb_handle = entities_.create(bomb);
@@ -345,7 +359,10 @@ namespace kotte
             {static_cast<float>(map_.width() * tile_size_),
              static_cast<float>(map_.height() * tile_size_) },
             spatial_cell_size_ };       /////////////////
-
+        current_blast_range_ = bomb_blast_range_;/////5
+        score_ = 0;///11.
+        combo_multiplier_ = 1;///11.
+        combo_timer_ = 0.0f;///11.
         populate_entities();
         initialize_enemies();
     }
@@ -364,6 +381,16 @@ namespace kotte
             if(doomed == nullptr){
                 continue;
             }
+            if (game_state_ == State::playing && doomed->kind == EntityKind::enemy) {///11.
+                if (combo_timer_ > 0.0f) {
+                    combo_multiplier_++; // 在连击时间内再次击杀，倍数提升
+                }
+                else {
+                    combo_multiplier_ = 1; // 否则重置为 1
+                }
+                combo_timer_ = 3.0f;       // 刷新连击时间窗口（3秒）
+                score_ += 100 * combo_multiplier_; // 基础分 100 * 当前倍数
+            }///11.
 
             // Spatial membership is derived from the live entity, so remove it
             // while the handle can still resolve to the bounds used at insertion.
@@ -421,7 +448,21 @@ namespace kotte
             }
 
             switch(candidate->kind){
-            case EntityKind::bomb:
+            case EntityKind::bomb: {//7.
+                // 如果爆炸波及到了一个活着的炸弹，触发连锁引爆
+                if (candidate->bomb_state.has_value()) {
+                    // 可以直接把该炸弹加入到炸弹引爆事实队列中，或者提前将其导火索归零
+                    bomb_detonated_facts_.push_back({
+                        .bomb = handle,
+                        .owner = candidate->bomb_state->owner,
+                        .world_position = candidate->world_position,
+                        .blast_range = candidate->bomb_state->blast_range
+                        });
+                }
+                destroy_entity_requests_.push_back({ handle });
+                break;
+            }//7.
+
             case EntityKind::enemy:
                 destroy_entity_requests_.push_back({handle});
                 break;
@@ -614,6 +655,19 @@ namespace kotte
             collision_diagnostics_.contacts);
         DrawText(diagnostics.c_str(), 10, 106, 20, RAYWHITE);
 
+        diagnostics = std::format(///5.
+            "bomb blasts range: {}",
+            current_blast_range_);
+        DrawText(diagnostics.c_str(), 10, 130, 20, RAYWHITE);///5.
+
+        diagnostics = std::format(///11.
+            "score: {} | combo: {}x | combotime: {:.1f}s",
+            score_,
+            combo_multiplier_,
+            combo_timer_);///11.
+
+        DrawText(diagnostics.c_str(), 10, 154, 20, RAYWHITE);
+
         diagnostics = std::format("seed: {}", seed_);
         DrawText(diagnostics.c_str(), 10, window_.height() - 78, 20, RAYWHITE);
 
@@ -667,8 +721,8 @@ namespace kotte
                 }
             }
         }
-                const Entity powerup_entity{ EntityKind::powerup, 
-                    {tile_size_ * 3.5f, tile_size_ * 2.5f} };
+                const Entity powerup_entity{ EntityKind::powerup, //////////
+                    {tile_size_ * 3.0f, tile_size_ * 6.0f} };
                 const EntityHandle powerup_handle = entities_.create(powerup_entity);
                 spatial_grid_.insert(powerup_handle, entity_world_bounds(powerup_entity));
     }
@@ -710,6 +764,7 @@ namespace kotte
         case EntityKind::bomb: size = {22.0f, 22.0f}; break;
         case EntityKind::crate: size = {36.0f, 48.0f}; break;
         case EntityKind::enemy: size = {28.0f, 30.0f}; break;
+        case EntityKind::powerup: size = {20.0f, 20.0f}; break;//出现了
         }
 
         const Vector2 top_left = entity.world_position - Vector2{size.x / 2.0f, size.y};
@@ -726,6 +781,7 @@ namespace kotte
         case EntityKind::bomb: size = {18.0f, 12.0f}; break;
         case EntityKind::crate: size = {32.0f, 32.0f}; break;
         case EntityKind::enemy: size = {24.0f, 14.0f}; break;
+        case EntityKind::powerup: size = { 15.0f, 10.0f }; break;//出现了
         }
 
         const Vector2 top_left = entity.world_position - Vector2{size.x / 2.0f, size.y};
@@ -802,7 +858,7 @@ namespace kotte
         case EntityKind::enemy:
         case EntityKind::bomb:
             return true;
-        case EntityKind::powerup:
+        case EntityKind::powerup:///////
             return false;
         }
         return false;
@@ -832,14 +888,27 @@ namespace kotte
         return static_cast<CardinalDirection>(new_value);
     }
 
-    bool Application::owner_has_active_bomb(EntityHandle owner) const noexcept{
+    /*bool Application::owner_has_active_bomb(EntityHandle owner) const noexcept{
         return std::ranges::any_of(active_bomb_handles_, [this, owner](EntityHandle bomb_handle){
             const Entity* bomb = entities_.try_get(bomb_handle);
             return bomb != nullptr
                 && bomb->bomb_state.has_value()
                 && bomb->bomb_state->owner == owner;
         });
-    }
+    }*/
+
+    int Application::count_active_bombs(EntityHandle owner) const noexcept {//6.
+        int count = 0;
+        for (EntityHandle bomb_handle : active_bomb_handles_) {
+            const Entity* bomb = entities_.try_get(bomb_handle);
+            if (bomb != nullptr
+                && bomb->bomb_state.has_value()
+                && bomb->bomb_state->owner == owner) {
+                count++;
+            }
+        }
+        return count;
+    }//6.
 
     Vector2 Application::tile_centre(Vector2 world_position) noexcept{
         const float tile_extent = static_cast<float>(tile_size_);
@@ -862,7 +931,7 @@ namespace kotte
         case EntityKind::bomb: return bomb_color_;
         case EntityKind::crate: return crate_color_;
         case EntityKind::enemy: return enemy_color_;
-        case EntityKind::powerup: return powerup_color_;
+        case EntityKind::powerup: return powerup_color_;//////
         }
         return MAGENTA;
     }

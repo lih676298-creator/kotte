@@ -123,6 +123,7 @@ namespace kotte
         [[nodiscard]] static Vector2 cardinal_vector(CardinalDirection direction) noexcept;
         [[nodiscard]] CardinalDirection different_enemy_direction(CardinalDirection current_direction);
         [[nodiscard]] bool owner_has_active_bomb(EntityHandle owner) const noexcept;
+        [[nodiscard]] int count_active_bombs(EntityHandle owner) const noexcept;///6.
         [[nodiscard]] static Vector2 tile_centre(Vector2 world_position) noexcept;
         [[nodiscard]] static Vector2 tile_centre(int column, int row) noexcept;
         [[nodiscard]] static Color entity_color(EntityKind kind) noexcept;
@@ -167,7 +168,10 @@ namespace kotte
         CollisionDiagnostics collision_diagnostics_;
         std::uint64_t seed_;
         EntityHandle player_handle_;
-        std::uint8_t current_blast_range_ = bomb_blast_range_;
+        std::uint8_t current_blast_range_ = bomb_blast_range_;////以下都是新加
         bool exit_requested_ = false;
+        float combo_timer_ = 0.0f;
+        std::uint8_t combo_multiplier_ = 1;
+        std::uint64_t score_ = 0;
     };
 }

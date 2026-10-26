@@ -27,7 +27,7 @@ namespace kotte
         EntityHandle owner;
         float fuse_remaining = 0.0f;
         std::uint8_t blast_range = 0;
-        bool detonation_requested = false;
+        bool detonation_requested = false;///7.
     };
 
     struct Entity final {

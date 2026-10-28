@@ -443,15 +443,15 @@ namespace kotte
 
             switch(candidate->kind){
             case EntityKind::bomb: {//连锁爆炸
-                if (candidate->bomb_state.has_value() && !candidate->bomb_state->detonation_requested) {//连锁爆炸
-                    Entity& bomb_entity = entity(handle);
+                Entity& bomb_entity = entity(handle);
+                if (bomb_entity.bomb_state.has_value() && !bomb_entity.bomb_state->detonation_requested) {
                     bomb_entity.bomb_state->detonation_requested = true;
                     bomb_detonated_facts_.push_back({
                      .bomb = handle,
-                     .owner = candidate->bomb_state->owner,
-                     .world_position = candidate->world_position,
-                     .blast_range = candidate->bomb_state->blast_range
-                        });
+                     .owner = bomb_entity.bomb_state->owner,
+                     .world_position = bomb_entity.world_position,
+                     .blast_range = bomb_entity.bomb_state->blast_range
+                  });
                 }
                 destroy_entity_requests_.push_back({ handle });
                 break;

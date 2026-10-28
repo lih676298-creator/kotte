@@ -139,8 +139,9 @@ namespace kotte
     }
 
     void Application::resolve_gameplay_facts(){
-        for(const BombDetonated& fact : bomb_detonated_facts_){
-            
+        for(std::size_t i = 0; i < bomb_detonated_facts_.size(); i++){//连锁爆炸
+            const auto& fact = bomb_detonated_facts_[i];//连锁爆炸
+            //const BombDetonated& fact : bomb_detonated_facts_括号里原来的东西
             BlastEffect effect;
             effect.remaining_seconds = blast_effect_seconds_;
             effect.tile_centres.reserve(static_cast<std::size_t>(fact.blast_range) * 4 + 1);
@@ -441,7 +442,21 @@ namespace kotte
             }
 
             switch(candidate->kind){
-            case EntityKind::bomb:
+            case EntityKind::bomb: {//连锁爆炸
+                if (candidate->bomb_state.has_value() && !candidate->bomb_state->detonation_requested) {//连锁爆炸
+                    Entity& bomb_entity = entity(handle);
+                    bomb_entity.bomb_state->detonation_requested = true;
+                    bomb_detonated_facts_.push_back({
+                     .bomb = handle,
+                     .owner = candidate->bomb_state->owner,
+                     .world_position = candidate->world_position,
+                     .blast_range = candidate->bomb_state->blast_range
+                        });
+                }
+                destroy_entity_requests_.push_back({ handle });
+                break;
+            }//连锁爆炸
+                
             case EntityKind::enemy:
                 destroy_entity_requests_.push_back({handle});
                 break;

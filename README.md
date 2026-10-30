@@ -10,10 +10,10 @@
 
 ## Features and validation
 
-| 1. Player damage and death | [what I tested, what I observed, and whether it matched the expected behaviour] |
-| 2. Round states and objective | [what I tested, what I observed, and whether it matched the expected behaviour] |
-| [# and name of chosen extension 1] | [what I tested, what I observed, and whether it matched the expected behaviour] |
 | Feature                          | Check, observed result, and expected behaviour                                                                                                                                                                                                 |
+|----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ 
+| 1. Player damage and death       | [I intentionally ran into an enemy and got destroyed, then the game crashed, which was unexpected.]                                                                                                                                            |
+| 2. Round states and objective    | [I reduce the map size, and when I got killed by the blast at the same time as destroying the enemy, 'Defeat' triggered first, which fits the priority I set.]                                                                                 |
 | 3. Safe restart                  | [When I lost the game and pressed R, the game restarted successfully, everything was reset, and all leftover trace from the previous run was cleaned up.]                                                                                      |
 | 4. Solid bombs with owner escape | [When I dropped a bomb, it acted like a wall and successfully blocked both my path and the enemy's, and only one bomb can be placed on this tile.]                                                                                             |
 | 5. Blast-range pickup            | [After creating a power-up, it appears on the map, but the player can't pick it up and the boost isn't applied, which is not the expected behavior.]                                                                                           |

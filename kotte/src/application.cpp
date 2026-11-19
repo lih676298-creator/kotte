@@ -14,12 +14,16 @@ namespace kotte
         int width,
         int height,
         std::string_view title,
+        int tile_map_width,
+        int tile_map_height,
         std::uint64_t seed,
         int target_fps)
         : window_{width, height, title, target_fps}
         , camera_{window_.size()}
         , random_{seed}
-        , map_{make_room(200, 120, random_)}
+        , room_width_{ tile_map_width }
+        , room_height_{ tile_map_height }
+        , map_{ make_room(room_width_, room_height_, random_) }
         , spatial_grid_{{
             static_cast<float>(map_.width() * tile_size_),
             static_cast<float>(map_.height() * tile_size_)}, spatial_cell_size_}
@@ -340,7 +344,7 @@ namespace kotte
         place_bomb_requests_.clear();
     }
 
-    void Application::restart() {    
+    void Application::restart() {     
         game_state_ = State::playing;
 
         place_bomb_requests_.clear();
@@ -363,7 +367,7 @@ namespace kotte
         initialize_enemies();
     }
 
-    void Application::apply_entity_destructions(){
+    void Application::apply_entity_destructions(){/////////
         // A moving entity may overlap several blast tiles, and several bombs may
         // reach it in one frame. Canonicalizing requests makes that multiplicity
         // explicit instead of depending on a forgiving destruction order.
@@ -885,7 +889,7 @@ namespace kotte
 
     int Application::count_active_bombs(EntityHandle owner) const noexcept {
         int count = 0;
-        for (EntityHandle bomb_handle : active_bomb_handles_) {
+        for (EntityHandle bomb_handle : active_bomb_handles_) { 
             const Entity* bomb = entities_.try_get(bomb_handle);
             if (bomb != nullptr
                 && bomb->bomb_state.has_value()
